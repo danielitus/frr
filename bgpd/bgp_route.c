@@ -1195,17 +1195,21 @@ int bgp_path_info_cmp(struct bgp *bgp, struct bgp_path_info *new,
 	/* 0. Admin distance check when one path is locally redistributed, and
 	 *    the other path is eligible for installation.
 	 */
-	new_redist = (new->peer == bgp->peer_self) && (new->sub_type == BGP_ROUTE_REDISTRIBUTE) &&
-		     bgp_zebra_announce_eligible(exist);
+	if (!CHECK_FLAG(bgp->flags, BGP_FLAG_BESTPATH_ADMIN_DISTANCE_IGNORE)) {
+		new_redist = (new->peer == bgp->peer_self) &&
+			     (new->sub_type == BGP_ROUTE_REDISTRIBUTE) &&
+			     bgp_zebra_announce_eligible(exist);
 
-	if (new_redist ||
-	    ((exist->peer == bgp->peer_self) && (exist->sub_type == BGP_ROUTE_REDISTRIBUTE) &&
-	     bgp_zebra_announce_eligible(new))) {
-		ret = bgp_path_info_cmp_distance(bgp, new, exist, debug, pfx_buf, new_buf,
-						 exist_buf, afi, safi, new_redist);
-		if (ret >= 0) {
-			*reason = bgp_path_selection_admin_distance;
-			return ret;
+		if (new_redist ||
+		    ((exist->peer == bgp->peer_self) &&
+		     (exist->sub_type == BGP_ROUTE_REDISTRIBUTE) &&
+		     bgp_zebra_announce_eligible(new))) {
+			ret = bgp_path_info_cmp_distance(bgp, new, exist, debug, pfx_buf, new_buf,
+							 exist_buf, afi, safi, new_redist);
+			if (ret >= 0) {
+				*reason = bgp_path_selection_admin_distance;
+				return ret;
+			}
 		}
 	}
 

@@ -765,6 +765,9 @@ struct bgp {
  */
 #define BGP_FLAG_BESTPATH_USE_IMPORTED_ATTRS (1ULL << 45)
 
+/* Ignore administrative distance comparison during bestpath selection */
+#define BGP_FLAG_BESTPATH_ADMIN_DISTANCE_IGNORE (1ULL << 47)
+
 	/* BGP default address-families.
 	 * New peers inherit enabled afi/safis from bgp instance.
 	 */
