@@ -3621,6 +3621,62 @@ void zebra_nhg_uninstall_kernel(struct nhg_hash_entry *nhe)
 	zebra_nhg_handle_uninstall(nhe);
 }
 
+static void zebra_nhg_requeue_re_tree(struct nhg_hash_entry *nhe)
+{
+	struct route_entry *re;
+
+	frr_each (nhe_re_tree, &nhe->re_head, re) {
+		rib_dest_t *dest;
+
+		if (!re->rn || RIB_SYSTEM_ROUTE(re))
+			continue;
+
+		if (CHECK_FLAG(re->status, ROUTE_ENTRY_REMOVED) ||
+		    CHECK_FLAG(re->status, ROUTE_ENTRY_INSTALLED) ||
+		    CHECK_FLAG(re->status, ROUTE_ENTRY_QUEUED))
+			continue;
+
+		dest = rib_dest_from_rnode(re->rn);
+		if (!dest || dest->selected_fib != re)
+			continue;
+
+		if (IS_ZEBRA_DEBUG_NHG_DETAIL)
+			zlog_debug("%s: Re-queuing route %p (%pFX) after NHG %p (%pNG) install",
+				   __func__, re, &re->rn->p, nhe, nhe);
+
+		rib_queue_add(re->rn);
+	}
+}
+
+/*
+ * Re-queue selected FIB routes whose ROUTE_ENTRY_INSTALLED flag was cleared
+ * (for example after an NHG invalidation or unsolicited kernel delete) once
+ * the NHG installation succeeds in the kernel. Without the NHG tracker flush
+ * engine, rib_process() will otherwise not run on routes whose owning
+ * protocol did not re-send them.
+ */
+static void zebra_nhg_requeue_uninstalled_routes(struct nhg_hash_entry *nhe)
+{
+	struct nhg_connected *rb_node_dep;
+
+	if (zebra_router_in_shutdown() ||
+	    !CHECK_FLAG(nhe->flags, NEXTHOP_GROUP_VALID) ||
+	    CHECK_FLAG(nhe->flags, NEXTHOP_GROUP_KEEP_AROUND))
+		return;
+
+	zebra_nhg_requeue_re_tree(nhe);
+
+	/*
+	 * Recursive singletons resolve directly to nhe and do not get their
+	 * own dplane NH install result, so re-queue their routes here as well.
+	 */
+	frr_each (nhg_connected_tree, &nhe->nhg_dependents, rb_node_dep) {
+		if (CHECK_FLAG(rb_node_dep->nhe->flags, NEXTHOP_GROUP_RECURSIVE) &&
+		    zebra_nhg_resolve(rb_node_dep->nhe) == nhe)
+			zebra_nhg_requeue_re_tree(rb_node_dep->nhe);
+	}
+}
+
 void zebra_nhg_dplane_result(struct zebra_dplane_ctx *ctx)
 {
 	enum dplane_op_e op;
@@ -3665,6 +3721,7 @@ void zebra_nhg_dplane_result(struct zebra_dplane_ctx *ctx)
 		case ZEBRA_DPLANE_REQUEST_SUCCESS:
 			SET_FLAG(nhe->flags, NEXTHOP_GROUP_INSTALLED);
 			zebra_nhg_handle_install(nhe, true);
+			zebra_nhg_requeue_uninstalled_routes(nhe);
 
 			/* If daemon nhg, send it an update */
 			if (PROTO_OWNED(nhe))
