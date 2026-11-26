@@ -183,6 +183,172 @@ def test_bgp_redistribute_ebgp():
     assert result is None, "EBGP first and then static route, but EBGP route not favored"
 
 
+def test_bgp_bestpath_admin_distance_ignore():
+    """
+    Verify 'bgp bestpath admin-distance ignore' skips step-0 admin-distance
+    comparison so a locally redistributed route (higher weight) beats an
+    eBGP path with a lower admin distance, and toggling the knob off
+    recalculates bestpaths immediately.
+    """
+    tgen = get_topogen()
+
+    if tgen.routers_have_failure():
+        pytest.skip(tgen.errors)
+
+    r1 = tgen.gears["r1"]
+    r2 = tgen.gears["r2"]
+
+    def _bgp_check_local_only(router, prefix):
+        output = json.loads(
+            router.vtysh_cmd("show bgp ipv4 unicast {} json".format(prefix))
+        )
+        paths = output.get("paths", [])
+        if len(paths) != 1:
+            return "expected 1 path, got {}".format(len(paths))
+        expected = {"paths": [{"valid": True, "sourced": True}]}
+        return topotest.json_cmp(output, expected)
+
+    def _bgp_check_local_wins_by_weight(router, prefix, neighbor):
+        output = json.loads(
+            router.vtysh_cmd("show bgp ipv4 unicast {} json".format(prefix))
+        )
+        expected = {
+            "paths": [
+                {
+                    "valid": True,
+                    "sourced": True,
+                    "weight": 32768,
+                    "bestpath": {
+                        "overall": True,
+                        "selectionReason": "Weight",
+                    },
+                },
+                {
+                    "valid": True,
+                    "peer": {
+                        "peerId": neighbor,
+                    },
+                },
+            ]
+        }
+        return topotest.json_cmp(output, expected)
+
+    def _check_static_selected(router, prefix):
+        output = json.loads(
+            router.vtysh_cmd("show ip route {} json".format(prefix))
+        )
+        expected = {
+            prefix: [
+                {
+                    "prefix": prefix,
+                    "protocol": "static",
+                    "selected": True,
+                    "distance": 30,
+                }
+            ]
+        }
+        return topotest.json_cmp(output, expected)
+
+    def _bgp_check_ebgp_wins(router, prefix, neighbor):
+        output = json.loads(
+            router.vtysh_cmd("show bgp ipv4 unicast {} json".format(prefix))
+        )
+        expected = {
+            "paths": [
+                {
+                    "bestpath": {
+                        "overall": True,
+                    },
+                    "peer": {
+                        "peerId": neighbor,
+                    },
+                }
+            ]
+        }
+        return topotest.json_cmp(output, expected)
+
+    def _check_bgp_selected(router, prefix):
+        output = json.loads(
+            router.vtysh_cmd("show ip route {} json".format(prefix))
+        )
+        expected = {
+            prefix: [
+                {
+                    "prefix": prefix,
+                    "protocol": "bgp",
+                    "selected": True,
+                    "distance": 20,
+                }
+            ]
+        }
+        return topotest.json_cmp(output, expected)
+
+    step("r2: withdraw 10.0.50.0/24 so r1 redistributes its local static route")
+    r2.vtysh_cmd(
+        """
+    configure terminal
+        no ip route 10.0.50.0/24 Null0
+    """
+    )
+
+    test_func = functools.partial(_bgp_check_local_only, r1, "10.0.50.0/24")
+    _, result = topotest.run_and_expect(test_func, None, count=30, wait=1)
+    assert result is None, "r1 did not converge back to local redistributed path"
+
+    step("r1: enable bgp bestpath admin-distance ignore")
+    r1.vtysh_cmd(
+        """
+    configure terminal
+        router bgp 65001
+            bgp bestpath admin-distance ignore
+    """
+    )
+    assert "bgp bestpath admin-distance ignore" in r1.vtysh_cmd("show running-config")
+
+    step("r2: re-advertise 10.0.50.0/24 via eBGP")
+    r2.vtysh_cmd(
+        """
+    configure terminal
+        ip route 10.0.50.0/24 Null0
+    """
+    )
+
+    step("r1: verify local redistributed path beats eBGP path by weight")
+    test_func = functools.partial(
+        _bgp_check_local_wins_by_weight, r1, "10.0.50.0/24", "192.168.12.2"
+    )
+    _, result = topotest.run_and_expect(test_func, None, count=30, wait=1)
+    assert result is None, "local redistributed route did not win by weight: {}".format(
+        result
+    )
+
+    test_func = functools.partial(_check_static_selected, r1, "10.0.50.0/24")
+    _, result = topotest.run_and_expect(test_func, None, count=30, wait=1)
+    assert result is None, "static route did not remain selected in RIB"
+
+    step("r1: disable bgp bestpath admin-distance ignore and verify recalculation")
+    r1.vtysh_cmd(
+        """
+    configure terminal
+        router bgp 65001
+            no bgp bestpath admin-distance ignore
+    """
+    )
+    assert "bgp bestpath admin-distance ignore" not in r1.vtysh_cmd(
+        "show running-config"
+    )
+
+    test_func = functools.partial(
+        _bgp_check_ebgp_wins, r1, "10.0.50.0/24", "192.168.12.2"
+    )
+    _, result = topotest.run_and_expect(test_func, None, count=30, wait=1)
+    assert result is None, "eBGP path did not win after disabling admin-distance ignore"
+
+    test_func = functools.partial(_check_bgp_selected, r1, "10.0.50.0/24")
+    _, result = topotest.run_and_expect(test_func, None, count=30, wait=1)
+    assert result is None, "BGP route not selected in RIB after disabling knob"
+
+
 if __name__ == "__main__":
     args = ["-s"] + sys.argv[1:]
     sys.exit(pytest.main(args))

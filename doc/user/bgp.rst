@@ -156,7 +156,8 @@ bottom until one of the factors can be used.
 
    When one route is locally redistributed and another route is either locally
    aggregated or received from another BGP speaker, prefer the route with a
-   lower admin distance.
+   lower admin distance. Note that this check is skipped if
+   :clicmd:`bgp bestpath admin-distance ignore` is configured.
 
 1. **Weight check**
 
@@ -389,6 +390,15 @@ the core instance (i.e., default VRF) for communication with peers.
 
 Route Selection
 ---------------
+
+.. clicmd:: bgp bestpath admin-distance ignore
+
+   Ignore the administrative distance check (step 0 of bestpath selection)
+   when comparing a locally redistributed route against a locally aggregated
+   or peer-learned BGP route, allowing bestpath selection to proceed directly
+   to the weight check.
+
+   Disabled by default.
 
 .. clicmd:: bgp bestpath as-path confed
 
@@ -1473,7 +1483,8 @@ OSPFv3 into ``address-family ipv4 unicast`` as OSPFv3 supports IPv6.
 
    Note - When redistributing a static route, or any other route, into BGP,
    the Admin Distance is carried into BGP, and is used in BGP's Best Path
-   calculation. When comparing a redistributed route with a local aggregate,
+   calculation unless :clicmd:`bgp bestpath admin-distance ignore` is
+   configured. When comparing a redistributed route with a local aggregate,
    or a route learned dynamically from another BGP speaker, the one with a
    lower Admin Distance is more preferred.
 

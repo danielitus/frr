@@ -4438,6 +4438,33 @@ DEFUN (no_bgp_bestpath_compare_router_id,
 	return CMD_SUCCESS;
 }
 
+/* "bgp bestpath admin-distance ignore" configuration. */
+DEFPY (bgp_bestpath_admin_distance_ignore,
+       bgp_bestpath_admin_distance_ignore_cmd,
+       "[no$no] bgp bestpath admin-distance ignore",
+       NO_STR
+       BGP_STR
+       "Change the default bestpath selection\n"
+       "Administrative distance\n"
+       "Ignore administrative distance in selecting a route\n")
+{
+	VTY_DECLVAR_CONTEXT(bgp, bgp);
+
+	if (no) {
+		if (CHECK_FLAG(bgp->flags, BGP_FLAG_BESTPATH_ADMIN_DISTANCE_IGNORE)) {
+			UNSET_FLAG(bgp->flags, BGP_FLAG_BESTPATH_ADMIN_DISTANCE_IGNORE);
+			bgp_recalculate_all_bestpaths(bgp);
+		}
+	} else {
+		if (!CHECK_FLAG(bgp->flags, BGP_FLAG_BESTPATH_ADMIN_DISTANCE_IGNORE)) {
+			SET_FLAG(bgp->flags, BGP_FLAG_BESTPATH_ADMIN_DISTANCE_IGNORE);
+			bgp_recalculate_all_bestpaths(bgp);
+		}
+	}
+
+	return CMD_SUCCESS;
+}
+
 /* "bgp bestpath as-path ignore" configuration.  */
 DEFUN (bgp_bestpath_aspath_ignore,
        bgp_bestpath_aspath_ignore_cmd,
@@ -13299,6 +13326,10 @@ static void bgp_show_bestpath(struct vty *vty, struct bgp *bgp, json_object *jso
 	if (use_json) {
 		json_object *bestpath = json_object_new_object();
 
+		json_object_boolean_add(bestpath, "adminDistanceIgnore",
+					CHECK_FLAG(bgp->flags,
+						   BGP_FLAG_BESTPATH_ADMIN_DISTANCE_IGNORE));
+
 		json_object_boolean_add(bestpath, "asPathIgnore",
 					CHECK_FLAG(bgp->flags, BGP_FLAG_ASPATH_IGNORE));
 
@@ -13334,6 +13365,10 @@ static void bgp_show_bestpath(struct vty *vty, struct bgp *bgp, json_object *jso
 		json_object_object_add(json, "bestPath", bestpath);
 	} else {
 		vty_out(vty, "Best Path Selection Criteria:\n");
+		vty_out(vty, "  Ignore admin distance is %s\n",
+			CHECK_FLAG(bgp->flags, BGP_FLAG_BESTPATH_ADMIN_DISTANCE_IGNORE)
+				? "Enabled"
+				: "Disabled");
 		vty_out(vty, "  Ignore AS path is %s\n",
 			CHECK_FLAG(bgp->flags, BGP_FLAG_ASPATH_IGNORE) ? "Enabled" : "Disabled");
 		vty_out(vty, "  Include confederation ASNs in AS path is %s\n",
@@ -13797,6 +13832,9 @@ DEFUN (show_bgp_memory,
 static void bgp_show_bestpath_json(struct bgp *bgp, json_object *json)
 {
 	json_object *bestpath = json_object_new_object();
+
+	if (CHECK_FLAG(bgp->flags, BGP_FLAG_BESTPATH_ADMIN_DISTANCE_IGNORE))
+		json_object_string_add(bestpath, "adminDistance", "ignore");
 
 	if (CHECK_FLAG(bgp->flags, BGP_FLAG_ASPATH_IGNORE))
 		json_object_string_add(bestpath, "asPath", "ignore");
@@ -22327,6 +22365,8 @@ int bgp_config_write(struct vty *vty)
 					bgp->rib_stale_time);
 
 		/* BGP bestpath method. */
+		if (CHECK_FLAG(bgp->flags, BGP_FLAG_BESTPATH_ADMIN_DISTANCE_IGNORE))
+			vty_out(vty, " bgp bestpath admin-distance ignore\n");
 		if (CHECK_FLAG(bgp->flags, BGP_FLAG_ASPATH_IGNORE))
 			vty_out(vty, " bgp bestpath as-path ignore\n");
 		if (CHECK_FLAG(bgp->flags, BGP_FLAG_ASPATH_CONFED))
@@ -23269,6 +23309,9 @@ void bgp_vty_init(void)
 	/* "bgp bestpath compare-routerid" commands */
 	install_element(BGP_NODE, &bgp_bestpath_compare_router_id_cmd);
 	install_element(BGP_NODE, &no_bgp_bestpath_compare_router_id_cmd);
+
+	/* "bgp bestpath admin-distance ignore" commands */
+	install_element(BGP_NODE, &bgp_bestpath_admin_distance_ignore_cmd);
 
 	/* "bgp bestpath as-path ignore" commands */
 	install_element(BGP_NODE, &bgp_bestpath_aspath_ignore_cmd);
