@@ -4849,7 +4849,30 @@ dplane_route_update_internal(struct route_node *rn,
 			ctx->u.rinfo.zd_old_instance = old_re->instance;
 			ctx->u.rinfo.zd_old_distance = old_re->distance;
 			ctx->u.rinfo.zd_old_metric = old_re->metric;
-			ctx->u.rinfo.nhe.old_id = old_re->nhe->id;
+			ctx->u.rinfo.nhe.old_id = 0;
+
+			/*
+			 * Only populate old_id (allowing the kernel dplane
+			 * provider to skip an identical route update) when
+			 * old_re and its resolved kernel NHG are still
+			 * installed in the kernel and have not been marked
+			 * for route re-installation after an NHG loss.
+			 */
+			if (old_re->nhe) {
+				struct nhg_hash_entry *old_nhe =
+					zebra_nhg_resolve(old_re->nhe);
+
+				if (CHECK_FLAG(old_re->status,
+					       ROUTE_ENTRY_INSTALLED) &&
+				    CHECK_FLAG(old_nhe->flags,
+					       NEXTHOP_GROUP_INSTALLED) &&
+				    !CHECK_FLAG(old_nhe->flags,
+						NEXTHOP_GROUP_REINSTALL_ROUTES))
+					ctx->u.rinfo.nhe.old_id =
+						old_re->nhe_installed_id
+							? old_re->nhe_installed_id
+							: old_nhe->id;
+			}
 
 #ifndef HAVE_NETLINK
 			/* For bsd, capture previous re's nexthops too, sigh.

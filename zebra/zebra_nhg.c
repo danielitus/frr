@@ -1081,8 +1081,13 @@ static void zebra_nhg_set_valid(struct nhg_hash_entry *nhe, bool valid)
 		/* If we're in shutdown, this interface event needs to clean
 		 * up installed NHGs, so don't clear that flag directly.
 		 */
-		if (!zebra_router_in_shutdown())
+		if (!zebra_router_in_shutdown()) {
+			if (CHECK_FLAG(nhe->flags, NEXTHOP_GROUP_INSTALLED) ||
+			    CHECK_FLAG(nhe->flags, NEXTHOP_GROUP_QUEUED))
+				SET_FLAG(nhe->flags,
+					 NEXTHOP_GROUP_REINSTALL_ROUTES);
 			UNSET_FLAG(nhe->flags, NEXTHOP_GROUP_INSTALLED);
+		}
 	}
 
 	/* Update validity of nexthops depending on it */
@@ -1241,6 +1246,8 @@ static void zebra_nhg_handle_kernel_state_change(struct nhg_hash_entry *nhe,
 			"Kernel %s a nexthop group with ID (%pNG) that we are still using for a route, sending it back down",
 			(is_delete ? "deleted" : "updated"), nhe);
 
+		if (is_delete)
+			SET_FLAG(nhe->flags, NEXTHOP_GROUP_REINSTALL_ROUTES);
 		UNSET_FLAG(nhe->flags, NEXTHOP_GROUP_INSTALLED);
 		zebra_nhg_install_kernel(nhe, ZEBRA_ROUTE_MAX);
 	} else
@@ -3604,6 +3611,17 @@ void zebra_nhg_dplane_result(struct zebra_dplane_ctx *ctx)
 			SET_FLAG(nhe->flags, NEXTHOP_GROUP_INSTALLED);
 			zebra_nhg_handle_install(nhe, true);
 
+			if (CHECK_FLAG(nhe->flags,
+				       NEXTHOP_GROUP_REINSTALL_ROUTES) &&
+			    CHECK_FLAG(nhe->flags, NEXTHOP_GROUP_VALID)) {
+				UNSET_FLAG(nhe->flags,
+					   NEXTHOP_GROUP_REINSTALL_ROUTES);
+				if (nhe->refcnt > 0 &&
+				    !CHECK_FLAG(nhe->flags,
+						NEXTHOP_GROUP_KEEP_AROUND))
+					rib_handle_nhg_reinstall(nhe);
+			}
+
 			/* If daemon nhg, send it an update */
 			if (PROTO_OWNED(nhe))
 				zsend_nhg_notify(nhe->type, nhe->zapi_instance,
@@ -4254,5 +4272,11 @@ void dump_nhg_flags(uint32_t flags, char *buf, size_t len)
 		if (!first)
 			strlcat(buf, ", ", len);
 		strlcat(buf, "Initial Delay", len);
+		first = false;
+	}
+	if (CHECK_FLAG(flags, NEXTHOP_GROUP_REINSTALL_ROUTES)) {
+		if (!first)
+			strlcat(buf, ", ", len);
+		strlcat(buf, "Reinstall Routes", len);
 	}
 }

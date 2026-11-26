@@ -178,6 +178,15 @@ struct nhg_hash_entry {
  * by the NHG layer, not the EVPN-MH layer.
  */
 #define NEXTHOP_GROUP_STALE_FDB (1 << 11)
+
+/*
+ * Set when an installed/queued NHG loses its kernel presence (via
+ * interface down invalidation or an unsolicited kernel delete). Because
+ * the kernel flushes routes referencing a deleted nexthop object, routes
+ * using this NHG must be re-installed once the NHG is back in the kernel
+ * and must not be skipped by the kernel dplane route-update optimization.
+ */
+#define NEXTHOP_GROUP_REINSTALL_ROUTES (1 << 12)
 };
 
 /* Upper 4 bits of the NHG are reserved for indicating the NHG type */

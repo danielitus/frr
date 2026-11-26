@@ -597,6 +597,65 @@ int rib_handle_nhg_replace(struct nhg_hash_entry *old_entry,
 	return ret;
 }
 
+void rib_handle_nhg_reinstall(struct nhg_hash_entry *nhe)
+{
+	struct zebra_router_table *zrt;
+	struct route_node *rn;
+	rib_dest_t *dest;
+	struct route_entry *re;
+
+	if (!nhe)
+		return;
+
+	if (IS_ZEBRA_DEBUG_RIB_DETAILED || IS_ZEBRA_DEBUG_NHG_DETAIL)
+		zlog_debug("%s: re-installing routes using nhe %p (%pNG)",
+			   __func__, nhe, nhe);
+
+	RB_FOREACH (zrt, zebra_router_table_head, &zrouter.tables) {
+		for (rn = route_top(zrt->table); rn;
+		     rn = srcdest_route_next(rn)) {
+			dest = rib_dest_from_rnode(rn);
+			if (!dest || !dest->selected_fib)
+				continue;
+
+			re = dest->selected_fib;
+
+			if (RIB_SYSTEM_ROUTE(re))
+				continue;
+
+			if (!re->nhe)
+				continue;
+
+			if (re->nhe != nhe &&
+			    zebra_nhg_resolve(re->nhe) != nhe &&
+			    re->nhe_installed_id != nhe->id)
+				continue;
+
+			/*
+			 * The kernel flushed routes referencing this NHG when
+			 * the NHG was deleted. Clear the installed markers so
+			 * any pending route update cannot be skipped as a no-op.
+			 */
+			UNSET_FLAG(re->status, ROUTE_ENTRY_INSTALLED);
+			re->nhe_installed_id = 0;
+
+			if (CHECK_FLAG(re->status, ROUTE_ENTRY_REMOVED))
+				continue;
+
+			if (!nexthop_group_active_nexthop_num(&re->nhe->nhg))
+				continue;
+
+			if (IS_ZEBRA_DEBUG_RIB || IS_ZEBRA_DEBUG_NHG_DETAIL)
+				rnode_debug(rn, re->vrf_id,
+					    "Re-installing route re %p (%s) after NHG %pNG reinstall",
+					    re, zebra_route_string(re->type),
+					    nhe);
+
+			rib_install_kernel(rn, re, NULL);
+		}
+	}
+}
+
 struct route_entry *rib_match(afi_t afi, safi_t safi, vrf_id_t vrf_id,
 			      const union g_addr *addr,
 			      struct route_node **rn_out)
